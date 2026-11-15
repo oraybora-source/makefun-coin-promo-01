@@ -53,20 +53,31 @@ Node.js 22.18+ (uses type-stripping; tested on Node 24). **Standard library
 only — no dependencies, nothing to install.** The grader runs `main.ts` with
 no network, so the default mode is a fully offline dry run.
 
-## Launch cost — measured live, 2026-11-15 ~12:30 WIB
+## Launch cost — measured live, 2026-11-15 (real launch ~14:30 WIB)
 
-`node main.ts --estimate` queries the live RPC for exact rent minimums:
+`node main.ts --estimate` queries the live RPC for exact rent minimums.
+**Correction 2026-11-15:** the first estimate (0.008077 SOL) was wrong —
+pump.fun funds the metadata account with 13,733,800 lamports, ~3.3× its
+bare rent. The real launch cost was **0.017798 SOL ≈ $1.26** (SOL $70.90),
+still well under Kevin's $5 "BIG" line:
 
 | Item | Cost |
 |---|---|
 | Rent: mint account (82 bytes) | 0.001067 SOL |
-| Rent: metadata account (~679 bytes) | 0.004100 SOL |
-| Rent: bonding curve (~150 bytes, upper bound) | 0.001412 SOL |
+| Metadata account funding (observed, not bare rent) | 0.013734 SOL |
+| Rent: bonding curve (~150 bytes, upper bound) | 0.001494 SOL |
 | Rent: associated bonding curve ATA (165 bytes) | 0.001488 SOL |
-| Network fees (2 signatures × 5,000 lamports) | 0.000010 SOL |
-| **Total, no dev buy** | **0.008077 SOL ≈ $0.57** (SOL $70.90) |
-| With a 0.02 SOL dev buy | ~0.028 SOL ≈ $2.00 |
-| With a 0.05 SOL dev buy | ~0.058 SOL ≈ $4.11 |
+| Network fees (2 signatures × 5,000 lamports + priority fee) | 0.000015 SOL |
+| **Total, no dev buy (actual launch)** | **0.017798 SOL ≈ $1.26** (SOL $70.90) |
+| With a 0.02 SOL dev buy | ~0.038 SOL ≈ $2.69 |
+| With a 0.05 SOL dev buy | ~0.068 SOL ≈ $4.82 |
+
+**Launched:** MakeFun Ghost (BOO), mint
+`4xpZuAVfe3xgrxA7GBxbtdeVoEYzxexpSEnxYnt5inY1`,
+tx
+`4U9rYdRhkR1pfA9UapjvSD8M36kaKjgCP9dDNYgz91ty4nHoGafHJopw6fmXZTvtegW3eM5VT58WU962Z1Sx6uDf`,
+https://pump.fun/coin/4xpZuAVfe3xgrxA7GBxbtdeVoEYzxexpSEnxYnt5inY1.
+Wallet after launch: 0.004197 SOL.
 
 pump.fun charges **0 SOL** to create a coin (2026); the cost above is Solana
 rent + network fees only. All figures are **under Kevin's $5 "BIG" line** —
@@ -75,10 +86,13 @@ but they are still real money, and the payout wallet is currently **empty
 recomputed by `--launch` preflight from live RPC before anything is spent;
 SOL price moves, so re-run `--estimate` on launch day.
 
-## Approval gate — what needs a human "yes" before the launch
+## Approval gate — what needed a human "yes" before the launch
 
-Nothing on-chain has been done yet: **no coin launched, nothing submitted,
-no SOL spent.** These steps each need explicit approval:
+**Launched 2026-11-15 ~14:30 WIB** (Kevin approved "Gas" 12:50 WIB):
+MakeFun Ghost (BOO), mint
+`4xpZuAVfe3xgrxA7GBxbtdeVoEYzxexpSEnxYnt5inY1`, cost 0.017798 SOL.
+LAUNCH.json records the launch; the launcher refuses a second launch.
+These steps needed explicit approval:
 
 1. **Fund the wallet.** Send ~**0.01 SOL** (≈ $0.71 — a small buffer over the
    ~0.008 SOL cost) to the payout wallet
@@ -175,5 +189,7 @@ Verified PDA vectors (all in `--self-test`, 28 checks, all passing):
   same transaction (the current IDL's `buy` also takes a `track_volume`
   argument and volume-accumulator accounts). Create-only is the cheaper and
   safer default; a dev buy is optional.
-- **No priority fee** is set (compute unit price 0) to keep the cost minimal;
-  the transaction may take a few extra slots to land under congestion.
+- **Priority fee:** `PRIORITY_FEE_MICRO_LAMPORTS` (default 0) adds a
+  ComputeBudget setComputeUnitPrice instruction. The real launch used
+  25,000 micro-lamports/CU (actual fee 15,075 lamports total incl. base
+  fee). Four 0-fee attempts were accepted by the RPC but never landed.

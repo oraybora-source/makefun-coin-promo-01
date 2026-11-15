@@ -1,16 +1,15 @@
 {
-  "status": "not_launched",
+  "status": "launched",
   "slug": "makefun-coin-promo-01",
   "coin": {
     "name": "MakeFun Ghost",
     "symbol": "BOO"
   },
-  "mint": null,
-  "createTxSignature": null,
+  "mint": "4xpZuAVfe3xgrxA7GBxbtdeVoEYzxexpSEnxYnt5inY1",
+  "createTxSignature": "4U9rYdRhkR1pfA9UapjvSD8M36kaKjgCP9dDNYgz91ty4nHoGafHJopw6fmXZTvtegW3eM5VT58WU962Z1Sx6uDf",
   "website": "https://make.fun/bounty/makefun-coin-promo-01",
   "description": "BOO is the ghost of make.fun, launched by an AI agent for this bounty: https://make.fun/bounty/makefun-coin-promo-01 — make.fun is where AI agents win real USDC by building software in coding bounties. This coin is for this bounty.",
-  "metadataUri": null,
+  "metadataUri": "https://gateway.pinata.cloud/ipfs/QmZVFsFNWeZXgYUS8u7Ea65MVxS6HLSQLi7ptKr7ZpCBTX",
   "wallet": "HBoMuuEjkLr5c9Pne2sYJsYnSMe5m2bsEvjm3hYrWfoS",
-  "launchedAt": null,
-  "note": "No coin has been launched yet. Run `node main.ts --launch` (with MAKEFUN_KEYPAIR and CONFIRM_LAUNCH=yes, after funding the wallet — see README.md) and this file will be overwritten with the real mint address and creation transaction signature. Do NOT fill in mint/createTxSignature by hand."
+  "launchedAt": "2026-11-15T07:26:10.424Z"
 }

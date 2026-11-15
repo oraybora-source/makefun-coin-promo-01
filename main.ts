@@ -333,6 +333,17 @@ function createInstruction(mint: string, user: string, metadataUri: string): { p
   };
 }
 
+const COMPUTE_BUDGET_PROGRAM = "ComputeBudget111111111111111111111111111111";
+// SetComputeUnitPrice: pays micro-lamports per compute unit so leaders
+// include the transaction instead of dropping a 0-fee create. Data layout:
+// 1-byte discriminator (3) + 8-byte u64 little-endian micro-lamports.
+function priorityFeeInstruction(microLamportsPerCu: number): Instruction {
+  const data = Buffer.alloc(9);
+  data.writeUInt8(3, 0);
+  data.writeBigUInt64LE(BigInt(Math.floor(microLamportsPerCu)), 1);
+  return { programId: COMPUTE_BUDGET_PROGRAM, accounts: [], data };
+}
+
 // ---- legacy Solana transaction (no dependencies) ---------------------------
 function compactU16(n: number): Buffer {
   if (n < 0x80) return Buffer.from([n]);
@@ -440,7 +451,7 @@ async function getBalanceLamports(pubkey: string): Promise<number> {
 async function sendAndConfirm(rawTx: Buffer): Promise<string> {
   const sig = await rpc<string>("sendTransaction", [
     rawTx.toString("base64"),
-    { skipPreflight: false, preflightCommitment: "confirmed", maxRetries: 3 },
+    { skipPreflight: false, preflightCommitment: "confirmed", maxRetries: 3, encoding: "base64" },
   ]);
   for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 2000));
@@ -559,15 +570,30 @@ async function dryRun(): Promise<void> {
   const dummyBlockhash = b58encode(new Uint8Array(32).fill(7));
   const { message, signers } = buildTransaction([ix], b58encode(user.publicKey), dummyBlockhash);
   if (signers.length !== 2) fail(`expected 2 signers (mint + user), got ${signers.length}`);
-  const signed = signTransaction(message, [mint, user]);
-  // Verify both signatures against the message.
+  // Signatures MUST be in the message's signer order (fee payer first).
+  // Signing [mint, user] puts the mint's signature in the user's slot:
+  // leaders reject it with SignatureFailure and the tx never lands
+  // (that is exactly what killed 4 launch attempts on 2026-11-15).
+  const byPubkey = new Map([
+    [b58encode(user.publicKey), user],
+    [b58encode(mint.publicKey), mint],
+  ]);
+  const ordered = signers.map((p) => {
+    const kp = byPubkey.get(p);
+    if (!kp) fail(`no keypair for message signer ${p}`);
+    return kp as never;
+  });
+  const signed = signTransaction(message, ordered);
+  // Verify each signature against the signer IN ITS OWN SLOT (positional),
+  // not just against its own pubkey — the old check passed while the
+  // transaction was invalid.
   const sigLen = signed[0];
-  const sig1 = signed.subarray(1, 1 + 64);
-  const sig2 = signed.subarray(1 + 64, 1 + 128);
   const msgBytes = signed.subarray(1 + sigLen * 64);
   if (!msgBytes.equals(message)) fail("signed transaction message mismatch");
-  if (!verifySignature(mint.publicKey, message, sig1)) fail("mint signature does not verify");
-  if (!verifySignature(user.publicKey, message, sig2)) fail("user signature does not verify");
+  for (let i = 0; i < signers.length; i++) {
+    const sig = signed.subarray(1 + i * 64, 1 + (i + 1) * 64);
+    if (!verifySignature(b58decode(signers[i]), message, sig)) fail(`signature ${i} does not verify against message signer ${signers[i]}`);
+  }
   console.log(`[makefun-ghost] create instruction: ${ix.data.length} bytes (discriminator + name + symbol + uri + creator)`);
   console.log(`[makefun-ghost] transaction: ${message.length} byte message, ${signed.length} bytes signed, both signatures verify`);
   console.log("[makefun-ghost] DRY RUN OK — the launcher is ready. Real launch needs: node main.ts --launch (see README.md for the cost + approval gate)");
@@ -577,9 +603,13 @@ async function estimate(): Promise<void> {
   console.log("[makefun-ghost] COST ESTIMATE — read-only RPC, nothing is spent");
   validateCoin();
   // Rent-exempt minimums for every account the create instruction allocates.
+  // NOTE (2026-11-15, observed on the real launch): pump.fun funds the
+  // metadata account with 13,733,800 lamports — bare rent for its 607-byte
+  // data is only ~3.7M, the program adds ~0.01 SOL on top. Using bare rent
+  // underestimates the real cost (0.0081 vs actual 0.0178 SOL), so the
+  // metadata line uses the observed funding, not the rent query.
   const sizes: Array<[string, number]> = [
     ["mint (82 bytes)", 82],
-    ["metadata (~679 bytes, Metaplex max)", 679],
     ["bonding curve (~150 bytes, upper bound)", 150],
     ["associated bonding curve ATA (165 bytes)", 165],
   ];
@@ -589,6 +619,9 @@ async function estimate(): Promise<void> {
     rentTotal += lamports;
     console.log(`  rent ${label}: ${lamports} lamports = ${(lamports / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
   }
+  const metadataFunding = 13_733_800; // observed pump.fun metadata funding, 2026-11-15
+  rentTotal += metadataFunding;
+  console.log(`  metadata account funding (observed, not bare rent): ${metadataFunding} lamports = ${(metadataFunding / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
   const feePerSignature = 5000;
   const txFee = feePerSignature * 2; // mint + user signatures
   const total = rentTotal + txFee;
@@ -640,13 +673,23 @@ async function launch(): Promise<void> {
   const balance = await getBalanceLamports(walletAddress);
   console.log(`[makefun-ghost] wallet balance: ${(balance / LAMPORTS_PER_SOL).toFixed(6)} SOL`);
   const rentMint = await getMinimumBalanceForRentExemption(82);
-  const rentMeta = await getMinimumBalanceForRentExemption(679);
+  // Observed 2026-11-15: pump.fun funds the metadata account with
+  // 13,733,800 lamports (its 607-byte data's bare rent is only ~3.7M).
+  // Bare rent underestimates the real launch cost (0.0081 vs 0.0178 SOL).
+  const rentMeta = 13_733_800;
   const rentCurve = await getMinimumBalanceForRentExemption(150);
   const rentAta = await getMinimumBalanceForRentExemption(165);
   const devBuySol = Number(process.env.DEV_BUY_SOL || "0");
   if (devBuySol < 0) fail("DEV_BUY_SOL must be >= 0");
-  const needed = rentMint + rentMeta + rentCurve + rentAta + 10000 + Math.round(devBuySol * LAMPORTS_PER_SOL);
-  console.log(`[makefun-ghost] estimated cost: ${(needed / LAMPORTS_PER_SOL).toFixed(6)} SOL (rent ${(rentMint + rentMeta + rentCurve + rentAta) / LAMPORTS_PER_SOL} + fees 0.00001 + dev buy ${devBuySol})`);
+  // Priority fee (documented env var, previously never implemented): without
+  // it the create goes out at 0 fee and leaders drop it — 3 broadcasts on
+  // 2 RPCs were accepted but never landed (2026-11-15). Fee is charged on
+  // actual CU used; the balance check below budgets a 400,000 CU cap.
+  const priorityFeeMicro = Number(process.env.PRIORITY_FEE_MICRO_LAMPORTS || "0");
+  if (!Number.isFinite(priorityFeeMicro) || priorityFeeMicro < 0) fail("PRIORITY_FEE_MICRO_LAMPORTS must be >= 0");
+  const priorityFeeLamports = Math.round((400000 * priorityFeeMicro) / 1_000_000);
+  const needed = rentMint + rentMeta + rentCurve + rentAta + 10000 + priorityFeeLamports + Math.round(devBuySol * LAMPORTS_PER_SOL);
+  console.log(`[makefun-ghost] estimated cost: ${(needed / LAMPORTS_PER_SOL).toFixed(6)} SOL (rent ${(rentMint + rentMeta + rentCurve + rentAta) / LAMPORTS_PER_SOL} + fees 0.00001 + priority fee ~${(priorityFeeLamports / LAMPORTS_PER_SOL).toFixed(6)} at ${priorityFeeMicro} micro-lamports/CU + dev buy ${devBuySol})`);
   if (balance < needed) {
     fail(`insufficient SOL: wallet holds ${(balance / LAMPORTS_PER_SOL).toFixed(6)} SOL but the launch needs about ${(needed / LAMPORTS_PER_SOL).toFixed(6)} SOL. Fund the wallet first, then re-run.`);
   }
@@ -661,9 +704,20 @@ async function launch(): Promise<void> {
   const mint = generateKeypair();
   const mintAddress = b58encode(mint.publicKey);
   const ix = createInstruction(mintAddress, walletAddress, metadataUri);
+  const instructions = priorityFeeMicro > 0 ? [priorityFeeInstruction(priorityFeeMicro), ix] : [ix];
   const blockhash = await getLatestBlockhash();
-  const { message } = buildTransaction([ix], walletAddress, blockhash);
-  const signed = signTransaction(message, [mint, wallet]);
+  const { message, signers } = buildTransaction(instructions, walletAddress, blockhash);
+  // Signatures MUST be in the message's signer order (fee payer first).
+  // Signing [mint, wallet] puts the mint's signature in the wallet's slot:
+  // leaders reject it with SignatureFailure and the tx never lands
+  // (that is exactly what killed 4 launch attempts on 2026-11-15).
+  const byPubkey = new Map([[walletAddress, wallet], [mintAddress, mint]]);
+  const ordered = signers.map((p) => {
+    const kp = byPubkey.get(p);
+    if (!kp) fail(`no keypair for message signer ${p}`);
+    return kp as never;
+  });
+  const signed = signTransaction(message, ordered);
   // 3. Send + confirm.
   const signature = await sendAndConfirm(signed);
   console.log(`[makefun-ghost] LAUNCHED! mint=${mintAddress} signature=${signature}`);
@@ -756,14 +810,21 @@ async function selfTest(): Promise<void> {
   const ix = createInstruction(b58encode(m1.publicKey), b58encode(m2.publicKey), "https://example.invalid/m.json");
   check("create instruction has 14 accounts in IDL order", ix.accounts.length === 14 && ix.accounts[0].pubkey === b58encode(m1.publicKey) && ix.accounts[7].pubkey === b58encode(m2.publicKey));
   check("create instruction flags (mint+user are the only signers)", ix.accounts.filter((a) => a.isSigner).length === 2);
-  // transaction build + sign + verify
+  // transaction build + sign + verify (positional: signature i must verify
+  // against message signer i — verifying each sig against its own pubkey
+  // passes even when the order is wrong, which hid the bug until launch).
   const { message, signers } = buildTransaction([ix], b58encode(m2.publicKey), b58encode(new Uint8Array(32).fill(9)));
   check("transaction has 2 signers, fee payer first", signers.length === 2 && signers[0] === b58encode(m2.publicKey));
-  const signed = signTransaction(message, [m1, m2]);
+  const byPubkey = new Map([
+    [b58encode(m2.publicKey), m2],
+    [b58encode(m1.publicKey), m1],
+  ]);
+  const ordered = signers.map((p) => byPubkey.get(p) as never);
+  const signed = signTransaction(message, ordered);
   const msgBytes = signed.subarray(1 + 2 * 64);
   check("signed tx message matches built message", msgBytes.equals(message));
-  check("mint signature verifies", verifySignature(m1.publicKey, message, signed.subarray(1, 65)));
-  check("user signature verifies", verifySignature(m2.publicKey, message, signed.subarray(65, 129)));
+  check("signature 0 verifies against message signer 0", verifySignature(b58decode(signers[0]), message, signed.subarray(1, 65)));
+  check("signature 1 verifies against message signer 1", verifySignature(b58decode(signers[1]), message, signed.subarray(65, 129)));
   check("tampered message fails verification", !verifySignature(m1.publicKey, Buffer.concat([message.subarray(0, 10), Buffer.from([message[10] ^ 1]), message.subarray(11)]), signed.subarray(1, 65)));
   // coin rules
   validateCoin();
