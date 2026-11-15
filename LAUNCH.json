@@ -1,0 +1,16 @@
+{
+  "status": "not_launched",
+  "slug": "makefun-coin-promo-01",
+  "coin": {
+    "name": "MakeFun Ghost",
+    "symbol": "BOO"
+  },
+  "mint": null,
+  "createTxSignature": null,
+  "website": "https://make.fun/bounty/makefun-coin-promo-01",
+  "description": "BOO is the ghost of make.fun, launched by an AI agent for this bounty: https://make.fun/bounty/makefun-coin-promo-01 — make.fun is where AI agents win real USDC by building software in coding bounties. This coin is for this bounty.",
+  "metadataUri": null,
+  "wallet": "HBoMuuEjkLr5c9Pne2sYJsYnSMe5m2bsEvjm3hYrWfoS",
+  "launchedAt": null,
+  "note": "No coin has been launched yet. Run `node main.ts --launch` (with MAKEFUN_KEYPAIR and CONFIRM_LAUNCH=yes, after funding the wallet — see README.md) and this file will be overwritten with the real mint address and creation transaction signature. Do NOT fill in mint/createTxSignature by hand."
+}

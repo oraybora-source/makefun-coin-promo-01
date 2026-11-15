@@ -1,0 +1,14 @@
+{
+  "name": "makefun-ghost-boo",
+  "version": "1.0.0",
+  "description": "MakeFun Ghost (BOO) — a pump.fun coin launcher for the make.fun bounty makefun-coin-promo-01",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dry-run": "node main.ts",
+    "test": "node main.ts --self-test",
+    "estimate": "node main.ts --estimate",
+    "launch": "node main.ts --launch",
+    "logo": "node scripts/generate-logo.mjs"
+  }
+}
